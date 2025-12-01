@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <limits>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <cassert>
 
+using sclock = std::chrono::steady_clock;
 using IntVector = std::vector<int>;
 using IntVector2D = std::vector<IntVector>;
 
@@ -35,14 +37,14 @@ constexpr const char *FILEPATH_EMPTY_ERR_MSG = "%s filepath empty\n";
 constexpr const char *FILE_OPENING_ERR_MSG = "cannot open file stream, file: %s";
 constexpr const char *USAGE_MSG = 
 "USAGE: ./sinblast ... followed by one of the following:\n"
-"    -q queryFile target1File [target2File ...]     # pair the query against all listed targets, produces .score files |\n"
-"    -g swc1File [swc2File ...]                     # generate a p-value matrix for the swc files, produces a .matrix file |\n"
-"    -r N swc1File [swc2File ...]                   # produce random pairs, ad infinitum if number of random pairs == -1, produces .sin files |\n"
-"    -s sinFile                                     # turn a sin file into a p-value matrix, produces a .matrix file |\n"
+"    -q queryFile target1File [target2File ...]         # pair the query against all listed targets, produces .score files |\n"
+"    -g swc1File [swc2File ...]                         # generate a p-value matrix for the swc files, produces a .matrix file |\n"
+"    -r N swc1File [swc2File ...] [-t generatorTime]    # produce random pairs, ad infinitum if number of random pairs == -1, produces .sin files |\n"
+"    -s sinFile                                         # turn a sin file into a p-value matrix, produces a .matrix file |\n"
 
-"    -m matrixFile                                  # read a p-value matrix file\n"
-"    -c                                             # Calculate cosine angle measure instead of sine\n"
-"    -h                                             # print usage message";
+"    -m matrixFile                                      # read a p-value matrix file\n"
+"    -c                                                 # calculate cosine angle measure instead of sine\n"
+"    -h                                                 # print usage message";
 enum class option : int {
     Query,
     GenerateMatrices,
@@ -65,6 +67,9 @@ std::string optToString(option m) {
         case option::DefaultMode: return "default";
         default: return "unknown";
     }
+}
+static inline double secondsSince(const std::chrono::steady_clock::time_point &start) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(sclock::now() - start).count() / 1000.0;
 }
 void printUsage(std::ostream& out) { out << USAGE_MSG; }
 void invalidCombinationError(option m1, option m2) {
@@ -738,7 +743,20 @@ int main(int argc, char *argv[]) {
         case option::Random: {
             uint64_t n = argc - optind; // number of input SWC files, from which random pairs will be chosen
             srand48(time(0) + getpid()); // seed the random number generator
+                                         //
+            auto start = sclock::now();
+            uint64_t maxSeconds = generatorTime * 3600;
+
             while(doInfinite || numRandomPairs > 0) {
+
+                if (generatorTime > 0) {
+                    auto elapsed = secondsSince(start);
+                    if (elapsed >= maxSeconds) {
+                        std::cerr << "Time limit reached after " << elapsed << " seconds.\n";
+                        break;
+                    }
+                }
+
                 uint64_t i = optind + n * drand48(), j = optind + n * drand48();
 
                 queryFilepath = argv[i];
@@ -757,6 +775,8 @@ int main(int argc, char *argv[]) {
                 PMVector matchVector = nearestNeighborKDTree(queryVector, targetVector, doCosine, true);
                 if (!doInfinite) --numRandomPairs;
             }
+
+            std::cerr << "Random-pair generation completed in " << secondsSince(start) << " seconds.\n";
             return 0;
         }
         // second step in generating the matrix
